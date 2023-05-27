@@ -59,7 +59,7 @@ def acquire_token_silent(app):
     """acquire_token_silent() - with an account already signed into MSAL Python."""
     account = _select_account(app)
     if account:
-        pprint.pprint(app.acquire_token_silent(
+        pprint.pprint(app.acquire_token_silent_with_error(
             _input_scopes(),
             account=account,
             force_refresh=_input_boolean("Bypass MSAL Python's token cache?"),
@@ -102,6 +102,15 @@ def acquire_token_by_username_password(app):
     """acquire_token_by_username_password() - See constraints here: https://docs.microsoft.com/en-us/azure/active-directory/develop/msal-authentication-flows#constraints-for-ropc"""
     pprint.pprint(app.acquire_token_by_username_password(
         _input("username: "), getpass.getpass("password: "), scopes=_input_scopes()))
+
+def acquire_token_by_device_flow(app):
+    """acquire_token_by_device_flow() - Note that this one does not go through broker"""
+    flow = app.initiate_device_flow(scopes=_input_scopes())
+    print(flow["message"])
+    sys.stdout.flush()  # Some terminal needs this to ensure the message is shown
+    input("After you completed the step above, press ENTER in this console to continue...")
+    result = app.acquire_token_by_device_flow(flow)  # By default it will block
+    pprint.pprint(result)
 
 _JWK1 = """{"kty":"RSA", "n":"2tNr73xwcj6lH7bqRZrFzgSLj7OeLfbn8216uOMDHuaZ6TEUBDN8Uz0ve8jAlKsP9CQFCSVoSNovdE-fs7c15MxEGHjDcNKLWonznximj8pDGZQjVdfK-7mG6P6z-lgVcLuYu5JcWU_PeEqIKg5llOaz-qeQ4LEDS4T1D2qWRGpAra4rJX1-kmrWmX_XIamq30C9EIO0gGuT4rc2hJBWQ-4-FnE1NXmy125wfT3NdotAJGq5lMIfhjfglDbJCwhc8Oe17ORjO3FsB5CLuBRpYmP7Nzn66lRY3Fe11Xz8AEBl3anKFSJcTvlMnFtu3EpD-eiaHfTgRBU7CztGQqVbiQ", "e":"AQAB"}"""
 SSH_CERT_DATA = {"token_type": "ssh-cert", "key_id": "key1", "req_cnf": _JWK1}
@@ -176,6 +185,7 @@ def main():
             acquire_token_silent,
             acquire_token_interactive,
             acquire_token_by_username_password,
+            acquire_token_by_device_flow,
             acquire_ssh_cert_silently,
             acquire_ssh_cert_interactive,
             remove_account,
