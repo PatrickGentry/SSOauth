@@ -157,6 +157,8 @@ def main():
         {"client_id": AZURE_CLI, "name": "Azure CLI (Correctly configured for MSA-PT)"},
         {"client_id": VISUAL_STUDIO, "name": "Visual Studio (Correctly configured for MSA-PT)"},
         {"client_id": "95de633a-083e-42f5-b444-a4295d8e9314", "name": "Whiteboard Services (Non MSA-PT app. Accepts AAD & MSA accounts.)"},
+        {"client_id": "289a413d-284b-4303-9c79-94380abe5d22", "name": "Ray's test app"},  # TODO: Decide whether to publish this app
+        {"client_id": "7e5e53b7-864a-40bc-903f-89708a6af755", "name": "mac broker test app"},  # TODO: Remove this app
         ],
         option_renderer=lambda a: a["name"],
         header="Impersonate this app (or you can type in the client_id of your own app)",
