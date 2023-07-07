@@ -1,7 +1,6 @@
 """This module is an adaptor to the underlying broker.
 It relies on PyMsalRuntime which is the package providing broker's functionality.
 """
-from threading import Event
 import json
 import logging
 import time
@@ -35,14 +34,12 @@ class TokenTypeError(ValueError):
     pass
 
 
-class _CallbackData:
-    def __init__(self):
-        self.signal = Event()
-        self.result = None
-
-    def complete(self, result):
-        self.signal.set()
-        self.result = result
+_redirect_uri_on_mac = "msauth.com.msauth.unsignedapp://auth"  # Note:
+    # On Mac, the native Python has a team_id which links to bundle id
+    # com.apple.python3 however it won't give Python scripts better security.
+    # Besides, the homebrew-installed Pythons have no team_id
+    # so they have to use a generic placeholder anyway.
+    # The v-team chose to combine two situations into using same placeholder.
 
 
 def _convert_error(error, client_id):
@@ -52,8 +49,9 @@ def _convert_error(error, client_id):
             or "AADSTS7000218" in context  # This "request body must contain ... client_secret" is just a symptom of current app has no WAM redirect_uri
             ):
         raise RedirectUriError(  # This would be seen by either the app developer or end user
-            "MsalRuntime won't work unless this one more redirect_uri is registered to current app: "
-            "ms-appx-web://Microsoft.AAD.BrokerPlugin/{}".format(client_id))
+            "MsalRuntime needs the current app to register these redirect_uri "
+            "(1) ms-appx-web://Microsoft.AAD.BrokerPlugin/{} (2) {}".format(
+            client_id, _redirect_uri_on_mac))
         # OTOH, AAD would emit other errors when other error handling branch was hit first,
         # so, the AADSTS50011/RedirectUriError is not guaranteed to happen.
     return {
@@ -71,7 +69,7 @@ def _convert_error(error, client_id):
 
 def _read_account_by_id(account_id, correlation_id):
     """Return an instance of MSALRuntimeError or MSALRuntimeAccount, or None"""
-    callback_data = _CallbackData()
+    callback_data = pymsalruntime.CallbackData()
     pymsalruntime.read_account_by_id(
         account_id,
         correlation_id,
@@ -127,7 +125,7 @@ def _signin_silently(
     params.set_requested_scopes(scopes)
     if claims:
         params.set_decoded_claims(claims)
-    callback_data = _CallbackData()
+    callback_data = pymsalruntime.CallbackData()
     for k, v in kwargs.items():  # This can be used to support domain_hint, max_age, etc.
         if v is not None:
             params.set_additional_parameter(k, str(v))
@@ -153,8 +151,11 @@ def _signin_interactively(
         **kwargs):
     params = pymsalruntime.MSALRuntimeAuthParameters(client_id, authority)
     params.set_requested_scopes(scopes)
-    params.set_redirect_uri("placeholder")  # pymsalruntime 0.1 requires non-empty str,
+    params.set_redirect_uri(
+        # pymsalruntime on Windows requires non-empty str,
         # the actual redirect_uri will be overridden by a value hardcoded by the broker
+        _redirect_uri_on_mac,
+        )
     if prompt:
         if prompt == "select_account":
             if login_hint:
@@ -177,7 +178,7 @@ def _signin_interactively(
             params.set_additional_parameter(k, str(v))
     if claims:
         params.set_decoded_claims(claims)
-    callback_data = _CallbackData()
+    callback_data = pymsalruntime.CallbackData(is_interactive=True)
     pymsalruntime.signin_interactively(
         parent_window_handle or pymsalruntime.get_console_window() or pymsalruntime.get_desktop_window(),  # Since pymsalruntime 0.2+
         params,
@@ -207,7 +208,7 @@ def _acquire_token_silently(
     for k, v in kwargs.items():  # This can be used to support domain_hint, max_age, etc.
         if v is not None:
             params.set_additional_parameter(k, str(v))
-    callback_data = _CallbackData()
+    callback_data = pymsalruntime.CallbackData()
     pymsalruntime.acquire_token_silently(
         params,
         correlation_id,
@@ -225,7 +226,7 @@ def _signout_silently(client_id, account_id, correlation_id=None):
         return _convert_error(account, client_id)
     if account is None:
         return
-    callback_data = _CallbackData()
+    callback_data = pymsalruntime.CallbackData()
     pymsalruntime.signout_silently(  # New in PyMsalRuntime 0.7
         client_id,
         correlation_id,

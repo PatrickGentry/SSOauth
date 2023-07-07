@@ -193,6 +193,7 @@ class ClientApplication(object):
             http_cache=None,
             instance_discovery=None,
             allow_broker=None,
+            enable_broker=None,
             ):
         """Create an instance of application.
 
@@ -458,7 +459,33 @@ class ClientApplication(object):
             New in version 1.19.0.
 
         :param boolean allow_broker:
+            Deprecated. It will only work on Windows platform.
+            Please use ``enable_broker`` instead.
+
+        :param boolean enable_broker:
             This parameter is NOT applicable to :class:`ConfidentialClientApplication`.
+
+            This setting is platform-dependent.
+            We currently support Windows 10+ and Mac.
+            You shall only enable broker when your app:
+
+            1. is running on supported platforms,
+               and already registered their corresponding redirect_uri
+
+               * ``ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id``
+                 if your app is expected to run on Windows 10+
+               * ``msauth.com.msauth.unsignedapp://auth``
+                 if your app is expected to run on Mac
+
+            2. installed broker dependency,
+               e.g. ``pip install msal[broker]>=1.24,<2``.
+
+            3. tested with ``acquire_token_interactive()`` at least.
+
+            This parameter defaults to None,
+            which means MSAL will not utilize a broker.
+
+            What is a broker, and why use it?
 
             A broker is a component installed on your device.
             Broker implicitly gives your device an identity. By using a broker,
@@ -475,31 +502,10 @@ class ClientApplication(object):
             so that your broker-enabled apps (even a CLI)
             could automatically SSO from a previously established signed-in session.
 
-            This parameter defaults to None, which means MSAL will not utilize a broker.
-            If this parameter is set to True,
-            MSAL will use the broker whenever possible,
-            and automatically fall back to non-broker behavior.
-            That also means your app does not need to enable broker conditionally,
-            you can always set allow_broker to True,
-            as long as your app meets the following prerequisite:
+            Note: ADFS and B2C do not support broker.
+            MSAL will automatically fallback to use browser.
 
-            * Installed optional dependency, e.g. ``pip install msal[broker]>=1.20,<2``.
-              (Note that broker is currently only available on Windows 10+)
-
-            * Register a new redirect_uri for your desktop app as:
-              ``ms-appx-web://Microsoft.AAD.BrokerPlugin/your_client_id``
-
-            * Tested your app in following scenarios:
-
-              * Windows 10+
-
-              * PublicClientApplication's following methods::
-                acquire_token_interactive(), acquire_token_by_username_password(),
-                acquire_token_silent() (or acquire_token_silent_with_error()).
-
-              * AAD and MSA accounts (i.e. Non-ADFS, non-B2C)
-
-            New in version 1.20.0.
+            New in version 1.24.0.
         """
         self.client_id = client_id
         self.client_credential = client_credential
@@ -565,23 +571,9 @@ class ClientApplication(object):
                     )
             else:
                 raise
-        is_confidential_app = bool(
-            isinstance(self, ConfidentialClientApplication) or self.client_credential)
-        if is_confidential_app and allow_broker:
-            raise ValueError("allow_broker=True is only supported in PublicClientApplication")
-        self._enable_broker = False
-        if (allow_broker and not is_confidential_app
-                and sys.platform == "win32"
-                and not self.authority.is_adfs and not self.authority._is_b2c):
-            try:
-                from . import broker  # Trigger Broker's initialization
-                self._enable_broker = True
-            except RuntimeError:
-                logger.exception(
-                    "Broker is unavailable on this platform. "
-                    "We will fallback to non-broker.")
-        logger.debug("Broker enabled? %s", self._enable_broker)
 
+        self._enable_broker = self._decide_broker(
+            enable_broker=enable_broker, allow_broker=allow_broker)
         self.token_cache = token_cache or TokenCache()
         self._region_configured = azure_region
         self._region_detected = None
@@ -590,6 +582,39 @@ class ClientApplication(object):
         self.authority_groups = None
         self._telemetry_buffer = {}
         self._telemetry_lock = Lock()
+
+    def _decide_broker(self, enable_broker=None, allow_broker=None):
+        _enable_broker = False
+        is_confidential_app = bool(
+            isinstance(self, ConfidentialClientApplication) or self.client_credential)
+        if is_confidential_app and allow_broker:
+            raise ValueError("allow_broker=True is only supported in PublicClientApplication")
+        if allow_broker:
+            warnings.warn(
+                "allow_broker is deprecated. "
+                "Please use enable_broker conditionally per platform.",
+                DeprecationWarning)
+        if is_confidential_app and enable_broker:
+            raise ValueError("enable_broker=True is only supported in PublicClientApplication")
+        if enable_broker and sys.platform not in ["win32", "darwin"]:
+            raise ValueError("enable_broker can only run on Windows or Mac")
+        opts_in = enable_broker or (
+            # When we started the broker project on Windows platform,
+            # the allow_broker was meant to be cross-platform. Now we realize
+            # that other platforms have different redirect_uri requirements,
+            # so the old allow_broker is deprecated and will only for Windows.
+            allow_broker and sys.platform == "win32")
+        if (opts_in and not is_confidential_app
+                and not self.authority.is_adfs and not self.authority._is_b2c):
+            try:
+                from . import broker  # Trigger Broker's initialization
+                _enable_broker = True
+            except RuntimeError:
+                logger.exception(
+                    "Broker is unavailable on this platform. "
+                    "We will fallback to non-broker.")
+        logger.debug("Broker enabled? %s", _enable_broker)
+        return _enable_broker
 
     def _decorate_scope(
             self, scopes,
@@ -1622,7 +1647,7 @@ class ClientApplication(object):
         """
         claims = _merge_claims_challenge_and_capabilities(
                 self._client_capabilities, claims_challenge)
-        if self._enable_broker:
+        if self._enable_broker and sys.platform != "darwin":  # _signin_silently() won't work on Mac
             from .broker import _signin_silently
             response = _signin_silently(
                 "https://{}/{}".format(self.authority.instance, self.authority.tenant),
@@ -2026,7 +2051,7 @@ class PublicClientApplication(ClientApplication):  # browser app or mobile app
 
 class ConfidentialClientApplication(ClientApplication):  # server-side web app
     """Same as :func:`ClientApplication.__init__`,
-    except that ``allow_broker`` parameter shall remain ``None``.
+    except that ``allow_broker`` and ``enable_broker`` parameters shall remain ``None``.
     """
 
     def acquire_token_for_client(self, scopes, claims_challenge=None, **kwargs):
